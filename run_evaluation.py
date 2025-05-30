@@ -1,18 +1,35 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+from datetime import datetime
+from pathlib import Path
 from analyze_dataset import analyze_dataset, plot_dataset_characteristics
 from direct_ocr import DirectOCR
 from preprocessed_ocr import PreprocessedOCR
 from yolo_ocr import YOLOOCR
 
+def create_evaluation_directory():
+    """
+    Create a timestamped directory for storing evaluation results
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    eval_dir = Path(f"evaluation_results_{timestamp}")
+    eval_dir.mkdir(exist_ok=True)
+    return eval_dir
+
 def run_all_evaluations(dataset_path):
     """
     Run all evaluations and generate comprehensive report
     """
+    # Create evaluation directory
+    eval_dir = create_evaluation_directory()
+    print(f"Storing results in: {eval_dir}")
+    
     print("1. Analyzing dataset...")
     dataset_stats = analyze_dataset(dataset_path)
     plot_dataset_characteristics(dataset_stats)
+    plt.savefig(eval_dir / 'dataset_analysis.png')
+    plt.close()
     
     print("\n2. Running direct OCR evaluation...")
     direct_ocr = DirectOCR()
@@ -40,12 +57,14 @@ def run_all_evaluations(dataset_path):
         yolo_results[model_name] = yolo_ocr.evaluate_model(dataset_path, model_name)
     
     # Generate comprehensive report
-    generate_report(direct_results, preprocessed_results, yolo_results)
+    generate_report(direct_results, preprocessed_results, yolo_results, eval_dir)
 
-def generate_report(direct_results, preprocessed_results, yolo_results):
+def generate_report(direct_results, preprocessed_results, yolo_results, eval_dir):
     """
     Generate comprehensive evaluation report
     """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     # Create comparison plots
     plt.figure(figsize=(15, 10))
     
@@ -97,38 +116,93 @@ def generate_report(direct_results, preprocessed_results, yolo_results):
     plt.legend()
     
     plt.tight_layout()
-    plt.savefig('evaluation_report.png')
+    plt.savefig(eval_dir / 'evaluation_report.png')
     plt.close()
     
-    # Save detailed results to CSV
-    results_df = pd.DataFrame({
-        'Model': models * 2,
-        'Method': ['Direct'] * len(models) + ['YOLO'] * len(models),
-        'Processing Time': direct_times + yolo_times,
-        'Success Rate': direct_success + yolo_success
-    })
-    results_df.to_csv('evaluation_results.csv', index=False)
+    # Prepare detailed results DataFrame
+    results_data = []
     
-    # Print summary
-    print("\nEvaluation Summary:")
-    print("=" * 50)
-    print("\nDirect OCR Results:")
-    for model, metrics in direct_results.items():
-        print(f"\n{model}:")
-        for metric, value in metrics.items():
-            print(f"  {metric}: {value}")
+    # Add direct OCR results
+    for model in models:
+        results_data.append({
+            'Timestamp': timestamp,
+            'Model': model,
+            'Method': 'Direct',
+            'Processing Time': direct_results[model]['avg_processing_time'],
+            'Success Rate': direct_results[model]['success_rate'],
+            'Accuracy': direct_results[model].get('accuracy', None),
+            'Precision': direct_results[model].get('precision', None),
+            'Recall': direct_results[model].get('recall', None)
+        })
     
-    print("\nYOLO + OCR Results:")
-    for model, metrics in yolo_results.items():
-        print(f"\n{model}:")
-        for metric, value in metrics.items():
-            print(f"  {metric}: {value}")
+    # Add YOLO OCR results
+    for model in models:
+        results_data.append({
+            'Timestamp': timestamp,
+            'Model': model,
+            'Method': 'YOLO',
+            'Processing Time': yolo_results[model]['avg_processing_time'],
+            'Success Rate': yolo_results[model]['success_rate'],
+            'Accuracy': yolo_results[model].get('accuracy', None),
+            'Precision': yolo_results[model].get('precision', None),
+            'Recall': yolo_results[model].get('recall', None)
+        })
     
-    print("\nBest performing model (by success rate):")
-    best_direct = max(direct_results.items(), key=lambda x: x[1]['success_rate'])
-    best_yolo = max(yolo_results.items(), key=lambda x: x[1]['success_rate'])
-    print(f"Direct OCR: {best_direct[0]} ({best_direct[1]['success_rate']:.2%})")
-    print(f"YOLO + OCR: {best_yolo[0]} ({best_yolo[1]['success_rate']:.2%})")
+    # Add preprocessed OCR results
+    for model in models:
+        for method in methods:
+            results_data.append({
+                'Timestamp': timestamp,
+                'Model': model,
+                'Method': f'Preprocessed_{method}',
+                'Processing Time': preprocessed_results[model][method]['avg_processing_time'],
+                'Success Rate': preprocessed_results[model][method]['success_rate'],
+                'Accuracy': preprocessed_results[model][method].get('accuracy', None),
+                'Precision': preprocessed_results[model][method].get('precision', None),
+                'Recall': preprocessed_results[model][method].get('recall', None)
+            })
+    
+    # Create and save results DataFrame
+    results_df = pd.DataFrame(results_data)
+    results_df.to_csv(eval_dir / 'evaluation_results.csv', index=False)
+    
+    # Generate and save summary report
+    with open(eval_dir / 'evaluation_summary.txt', 'w') as f:
+        f.write(f"Evaluation Summary (Generated at {timestamp})\n")
+        f.write("=" * 50 + "\n\n")
+        
+        f.write("Direct OCR Results:\n")
+        for model, metrics in direct_results.items():
+            f.write(f"\n{model}:\n")
+            for metric, value in metrics.items():
+                f.write(f"  {metric}: {value}\n")
+        
+        f.write("\nYOLO + OCR Results:\n")
+        for model, metrics in yolo_results.items():
+            f.write(f"\n{model}:\n")
+            for metric, value in metrics.items():
+                f.write(f"  {metric}: {value}\n")
+        
+        f.write("\nBest performing models:\n")
+        best_direct = max(direct_results.items(), key=lambda x: x[1]['success_rate'])
+        best_yolo = max(yolo_results.items(), key=lambda x: x[1]['success_rate'])
+        f.write(f"Direct OCR: {best_direct[0]} ({best_direct[1]['success_rate']:.2%})\n")
+        f.write(f"YOLO + OCR: {best_yolo[0]} ({best_yolo[1]['success_rate']:.2%})\n")
+        
+        # Add preprocessing method comparison
+        f.write("\nPreprocessing Method Comparison:\n")
+        for model in models:
+            f.write(f"\n{model}:\n")
+            for method in methods:
+                success_rate = preprocessed_results[model][method]['success_rate']
+                f.write(f"  {method}: {success_rate:.2%}\n")
+    
+    print(f"\nEvaluation results have been saved to: {eval_dir}")
+    print("Files generated:")
+    print(f"- evaluation_results.csv: Detailed results with timestamps")
+    print(f"- evaluation_report.png: Visual comparison plots")
+    print(f"- evaluation_summary.txt: Summary report with best performing models")
+    print(f"- dataset_analysis.png: Dataset characteristics analysis")
 
 if __name__ == "__main__":
     dataset_path = r"G:\내 드라이브\2025_Work\ocr\repo\kor-ocr2db\data"
