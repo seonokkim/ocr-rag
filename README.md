@@ -1,102 +1,84 @@
-# OCR-RAG: OCR Evaluation and Analysis Framework
+# Korean OCR Evaluation Framework
 
-This repository contains a comprehensive OCR (Optical Character Recognition) evaluation framework that compares different OCR approaches and preprocessing methods.
+This repository provides a comprehensive framework for evaluating the performance of Korean OCR models.
 
-## Features
+## Key Features
 
-- **Multiple OCR Engines**: Support for Tesseract, PaddleOCR, and EasyOCR
-- **Different Processing Methods**:
-  - Direct OCR: Performs OCR directly on input images
-  - Preprocessed OCR: Applies various image processing techniques before OCR
-  - YOLO + OCR: Uses YOLO for text detection before OCR
-- **Comprehensive Evaluation**: 
-  - Processing time analysis
-  - Success rate comparison
-  - Accuracy, precision, and recall metrics
-  - Dataset analysis and visualization
+- Support for multiple OCR models:
+  - EasyOCR
+  - PaddleOCR (Optional - requires successful installation)
+  - Tesseract (Planned)
+  - YOLO-based OCR (Planned)
+
+- Modular image preprocessing steps:
+  - Sharpening
+  - Denoising
+  - Binarization
+
+- GPU/CPU support
+- Comprehensive evaluation metrics:
+  - Item Accuracy (Bounding box matching)
+  - Character Accuracy
+  - Inference Time
+  - Accuracy by Text Type
+  - Accuracy by Location (Top/Middle/Bottom)
+  - Accuracy by Text Length (Short/Medium/Long)
+  - Accuracy by Bounding Box Size (Small/Medium/Large)
+  - Text Similarity (Normalized Levenshtein, ROUGE, BLEU)
+
+- Structured results saving (JSON files with sequential numbering)
+- Performance report generation (CSV files with sequential numbering)
+
+## Setup
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/seonokkim/kor-ocr-rag
+   cd kor-ocr-rag
+   ```
+
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *Note: PaddleOCR installation can sometimes be tricky due to dependencies. If you encounter issues, the script is designed to skip PaddleOCR evaluation if the module is not available.*
+
+## Usage
+
+1. Organize your data:
+   Place your test images in the directory specified by `data.test_dir` and corresponding label JSON files in `data.label_dir` in `configs/default_config.yaml`. The current structure expects images in `test_dir/images/...` and labels in `label_dir/labels/...`.
+
+2. Configure your evaluation:
+   Modify `configs/default_config.yaml` to select the model(s), preprocessing steps, and hardware settings (GPU/CPU) you want to use.
+
+3. Run the evaluation script:
+   ```bash
+   python src/run_evaluation.py
+   ```
+   This will perform the evaluation based on your configuration, save detailed results as JSON files with sequential numbering, and generate a performance report CSV file with sequential numbering in the `results/` directory.
 
 ## Project Structure
 
 ```
-.
-├── analyze_dataset.py      # Dataset analysis and visualization
-├── direct_ocr.py          # Direct OCR implementation
-├── preprocessed_ocr.py    # Preprocessed OCR implementation
-├── yolo_ocr.py           # YOLO + OCR implementation
-├── run_evaluation.py      # Main evaluation script
-├── evaluate_ocr.py        # OCR evaluation utilities
-├── requirements.txt       # Project dependencies
-├── setup.py              # Project setup script
-│
-├── data/                 # Dataset directory
-├── processed_ocr/        # Processed OCR results
-├── direct_ocr/          # Direct OCR results
-└── common/              # Shared utilities and configurations
+kor-ocr-rag/
+├── data/                      # Data folder (images, labels)
+├── src/
+│   ├── models/               # OCR model implementations
+│   ├── preprocessing/        # Image preprocessing modules
+│   ├── evaluation/          # Performance evaluation module
+│   └── utils/               # Utility functions
+├── tests/                   # Test code
+├── configs/                 # Configuration files
+├── results/                 # Experiment results and reports
+└── requirements.txt         # Dependency packages
 ```
-
-## Setup
-
-1. Create and activate virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-.\venv\Scripts\activate   # Windows
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Install Tesseract OCR:
-```bash
-# Ubuntu/Debian
-sudo apt-get install tesseract-ocr
-
-# macOS
-brew install tesseract
-
-# Windows
-# Download installer from https://github.com/UB-Mannheim/tesseract/wiki
-```
-
-## Usage
-
-1. Run the evaluation:
-```bash
-python run_evaluation.py
-```
-
-This will:
-- Analyze the dataset characteristics
-- Run evaluations for all OCR methods
-- Generate comprehensive reports and visualizations
-- Save results in a timestamped directory
-
-2. View results:
-- Check the generated `evaluation_results_YYYYMMDD_HHMMSS` directory
-- Review `evaluation_results.csv` for detailed metrics
-- View `evaluation_report.png` for visual comparisons
-- Read `evaluation_summary.txt` for performance analysis
-
-## Evaluation Methods
-
-### Direct OCR
-Performs OCR directly on input images without any preprocessing. Best for high-quality images.
-
-### Preprocessed OCR
-Applies various image processing techniques:
-- Grayscale conversion
-- Adaptive thresholding
-- Gaussian blur
-- Image sharpening
-- Denoising
-
-### YOLO + OCR
-Uses YOLO for text detection before performing OCR, which can improve accuracy for complex images.
-
-## Contributing
-Feel free to submit issues and enhancement requests!
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details. 
+
+MIT License 
