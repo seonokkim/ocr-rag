@@ -55,6 +55,17 @@ wheels/
 .installed.cfg
 *.egg
 
+# Model files
+models/
+*.pth
+*.pt
+*.pkl
+*.pkl.gz
+*.pkl.bz2
+*.pkl.zip
+*.pkl.tar
+*.pkl.tar.gz
+
 # Unit test / coverage reports
 htmlcov/
 .tox/

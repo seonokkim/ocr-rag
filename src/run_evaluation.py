@@ -9,6 +9,7 @@ import json
 from Levenshtein import distance as levenshtein_distance
 from rouge import Rouge
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+import argparse
 
 # Attempt to import PaddleOCR module
 try:
@@ -81,7 +82,6 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
     
     data_dir = config['data']['test_dir']
     label_dir = config['data']['label_dir']
-    test_data_limit = config['evaluation']['test_data_limit']
 
     # Match images and label files (explore subfolders)
     for root, _, files in os.walk(Path(data_dir) / 'images'): # Explore from images/ subfolder
@@ -105,9 +105,8 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
                         ground_truth_annotations.append(label_data.get('annotations', []))
                         images.append(img)
                         
-                        # Check if we've reached the limit
-                        if test_data_limit > 0 and len(images) >= test_data_limit:
-                            return images, ground_truth_annotations
+                        # Return after finding first valid image
+                        return images, ground_truth_annotations
                     else:
                         print(f"Warning: Could not load image {img_path}")
                 else:
@@ -188,8 +187,9 @@ def evaluate_combination(
         pred_full_text = ' '.join([text for text, _ in pred_list])
         
         # Calculate Levenshtein distance
-        total_levenshtein_distance += levenshtein_distance(gt_full_text, pred_full_text)
-        total_gt_length += len(gt_full_text)
+        if gt_full_text and pred_full_text:
+            total_levenshtein_distance += levenshtein_distance(gt_full_text, pred_full_text)
+            total_gt_length += len(gt_full_text)
         
         # Calculate ROUGE score
         try:
@@ -199,152 +199,179 @@ def evaluate_combination(
                     total_rouge_scores[metric] += rouge_scores[metric]['f']
                 total_rouge_count += 1
         except Exception as e:
-            print(f"Warning: Error calculating ROUGE score - {str(e)}")
+            print(f"Warning: ROUGE score calculation failed: {str(e)}")
         
         # Calculate BLEU score
         try:
             if gt_full_text and pred_full_text:
-                # Split sentences into words
-                reference = [gt_full_text.split()]
-                candidate = pred_full_text.split()
-                
-                # Calculate BLEU score (1-gram, 2-gram, 3-gram, 4-gram)
-                weights = [(1, 0, 0, 0), (0.5, 0.5, 0, 0), (0.33, 0.33, 0.33, 0), (0.25, 0.25, 0.25, 0.25)]
-                bleu_scores = []
-                
-                for weight in weights:
-                    score = sentence_bleu(reference, candidate, weights=weight, smoothing_function=smoothing)
-                    bleu_scores.append(score)
-                
-                # Calculate average BLEU score
-                total_bleu_score += sum(bleu_scores) / len(bleu_scores)
+                bleu_score = sentence_bleu([gt_full_text.split()], pred_full_text.split(), 
+                                         smoothing_function=smoothing)
+                total_bleu_score += bleu_score
                 total_bleu_count += 1
         except Exception as e:
-            print(f"Warning: Error calculating BLEU score - {str(e)}")
+            print(f"Warning: BLEU score calculation failed: {str(e)}")
         
-        total_items += len(gt_texts)
-        
-        # Match predictions with Ground Truth
+        # Match predictions with ground truth
         matched_gt_indices = set()
         for pred_text, pred_box in pred_list:
             best_iou = 0
             best_gt_idx = -1
             
-            # Find the Ground Truth with the highest IoU
-            for i, (gt_text, gt_box) in enumerate(zip(gt_texts, gt_boxes)):
-                if i in matched_gt_indices:
+            for gt_idx, (gt_text, gt_box) in enumerate(zip(gt_texts, gt_boxes)):
+                if gt_idx in matched_gt_indices:
                     continue
                     
-                iou = bbox_iou(pred_box, gt_box)
-                if iou > best_iou and iou > 0.5:  # IoU threshold
+                iou = bbox_iou(gt_box, pred_box)
+                if iou > best_iou and iou > 0.5:  # IoU 임계값
                     best_iou = iou
-                    best_gt_idx = i
+                    best_gt_idx = gt_idx
             
-            # If matched
             if best_gt_idx != -1:
                 matched_gt_indices.add(best_gt_idx)
                 matched_items += 1
                 
-                # Calculate character-level accuracy
+                # 문자 단위 정확도 계산
                 gt_text = gt_texts[best_gt_idx]
                 total_chars += len(gt_text)
-                matched_chars += sum(1 for c1, c2 in zip(pred_text, gt_text) if c1 == c2)
+                matched_chars += sum(1 for c1, c2 in zip(gt_text, pred_text) if c1 == c2)
                 
-                # Accuracy by text type
+                # 추가 메트릭 업데이트
                 gt_type = gt_types[best_gt_idx]
-                if gt_type not in type_metrics:
-                    type_metrics[gt_type] = {'total': 0, 'matched': 0}
-                type_metrics[gt_type]['total'] += 1
-                if pred_text == gt_text:
-                    type_metrics[gt_type]['matched'] += 1
+                type_metrics[gt_type] = type_metrics.get(gt_type, 0) + 1
                 
-                # Accuracy by location (top/middle/bottom)
-                y_center = (gt_box[1] + gt_box[3]) / 2
-                region = 'top' if y_center < 0.33 else 'middle' if y_center < 0.66 else 'bottom'
-                if region not in region_metrics:
-                    region_metrics[region] = {'total': 0, 'matched': 0}
-                region_metrics[region]['total'] += 1
-                if pred_text == gt_text:
-                    region_metrics[region]['matched'] += 1
+                # 위치 기반 메트릭
+                y_center = (gt_boxes[best_gt_idx][1] + gt_boxes[best_gt_idx][3]) / 2
+                img_height = img.shape[0]
+                if y_center < img_height / 3:
+                    region = 'top'
+                elif y_center < 2 * img_height / 3:
+                    region = 'middle'
+                else:
+                    region = 'bottom'
+                region_metrics[region] = region_metrics.get(region, 0) + 1
                 
-                # Accuracy by text length
-                length = len(gt_text)
-                length_key = 'short' if length <= 2 else 'medium' if length <= 5 else 'long'
-                if length_key not in length_metrics:
-                    length_metrics[length_key] = {'total': 0, 'matched': 0}
-                length_metrics[length_key]['total'] += 1
-                if pred_text == gt_text:
-                    length_metrics[length_key]['matched'] += 1
+                # 길이 기반 메트릭
+                text_length = len(gt_text)
+                if text_length < 5:
+                    length = 'short'
+                elif text_length < 10:
+                    length = 'medium'
+                else:
+                    length = 'long'
+                length_metrics[length] = length_metrics.get(length, 0) + 1
                 
-                # Accuracy by bounding box size
-                box_area = (gt_box[2] - gt_box[0]) * (gt_box[3] - gt_box[1])
-                size_key = 'small' if box_area < 1000 else 'medium' if box_area < 5000 else 'large'
-                if size_key not in size_metrics:
-                    size_metrics[size_key] = {'total': 0, 'matched': 0}
-                size_metrics[size_key]['total'] += 1
-                if pred_text == gt_text:
-                    size_metrics[size_key]['matched'] += 1
+                # 크기 기반 메트릭
+                box_width = gt_boxes[best_gt_idx][2] - gt_boxes[best_gt_idx][0]
+                box_height = gt_boxes[best_gt_idx][3] - gt_boxes[best_gt_idx][1]
+                box_size = box_width * box_height
+                if box_size < 1000:
+                    size = 'small'
+                elif box_size < 5000:
+                    size = 'medium'
+                else:
+                    size = 'large'
+                size_metrics[size] = size_metrics.get(size, 0) + 1
+        
+        total_items += len(gt_texts)
     
-    # Calculate final accuracies
-    item_accuracy = float(matched_items) / total_items if total_items > 0 else 0.0
-    char_accuracy = float(matched_chars) / total_chars if total_chars > 0 else 0.0
+    # Calculate final metrics
+    metrics = {
+        'item_accuracy': matched_items / total_items if total_items > 0 else 0,
+        'char_accuracy': matched_chars / total_chars if total_chars > 0 else 0,
+        'inference_time': inference_time,
+    }
     
-    # Calculate additional metrics
-    type_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
-                      for k, v in type_metrics.items()}
-    region_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
-                        for k, v in region_metrics.items()}
-    length_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
-                        for k, v in length_metrics.items()}
-    size_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
-                      for k, v in size_metrics.items()}
+    # Add type-specific metrics
+    for ttype in type_metrics:
+        metrics[f'type_{ttype}'] = type_metrics[ttype] / total_items if total_items > 0 else 0
     
-    # Calculate full text comparison metrics
-    normalized_levenshtein = 1.0 - (float(total_levenshtein_distance) / total_gt_length) if total_gt_length > 0 else 0.0
-    rouge_scores = {k: float(v) / total_rouge_count if total_rouge_count > 0 else 0.0 
-                   for k, v in total_rouge_scores.items()}
-    bleu_score = float(total_bleu_score) / total_bleu_count if total_bleu_count > 0 else 0.0
-
+    # Add region-specific metrics
+    for region in region_metrics:
+        metrics[f'region_{region}'] = region_metrics[region] / total_items if total_items > 0 else 0
+    
+    # Add length-specific metrics
+    for length in length_metrics:
+        metrics[f'length_{length}'] = length_metrics[length] / total_items if total_items > 0 else 0
+    
+    # Add size-specific metrics
+    for size in size_metrics:
+        metrics[f'size_{size}'] = size_metrics[size] / total_items if total_items > 0 else 0
+    
+    # Add text similarity metrics
+    if total_gt_length > 0:
+        metrics['normalized_levenshtein'] = 1 - (total_levenshtein_distance / total_gt_length)
+    else:
+        metrics['normalized_levenshtein'] = 0
+    
+    if total_bleu_count > 0:
+        metrics['bleu_score'] = total_bleu_score / total_bleu_count
+    else:
+        metrics['bleu_score'] = 0
+    
+    if total_rouge_count > 0:
+        for metric in ['rouge-1', 'rouge-2', 'rouge-l']:
+            metrics[f'rouge_{metric}'] = total_rouge_scores[metric] / total_rouge_count
+    else:
+        for metric in ['rouge-1', 'rouge-2', 'rouge-l']:
+            metrics[f'rouge_{metric}'] = 0
+    
     return {
-        'metrics': {
-            'item_accuracy': item_accuracy,
-            'char_accuracy': char_accuracy,
-            'inference_time': inference_time,
-            'type_accuracies': type_accuracies,
-            'region_accuracies': region_accuracies,
-            'length_accuracies': length_accuracies,
-            'size_accuracies': size_accuracies,
-            'text_similarity': {
-                'normalized_levenshtein': normalized_levenshtein,
-                'rouge_scores': rouge_scores,
-                'bleu_score': bleu_score
-            }
-        },
+        'metrics': metrics,
         'predictions': all_predictions
     }
 
 def main():
+    # Argument parsing
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--models', nargs='+', default=None, help='List of models to evaluate (tesseract, easyocr, yolo, paddleocr)')
+    parser.add_argument('--test_data_limit', type=int, default=None, help='Number of test data to use')
+    args = parser.parse_args()
+
     # Load configuration
     with open("configs/default_config.yaml", 'r') as f:
         config = yaml.safe_load(f)
-    
+
+    # Use argument if provided, else config
+    test_data_limit = args.test_data_limit if args.test_data_limit is not None else config.get('evaluation', {}).get('test_data_limit', 1)
+    # Patch config for load_test_data
+    if 'evaluation' not in config:
+        config['evaluation'] = {}
+    config['evaluation']['test_data_limit'] = test_data_limit
+
+    # Determine models to evaluate
+    model_names = args.models if args.models is not None else config.get('evaluation', {}).get('models', ['tesseract', 'easyocr', 'yolo', 'paddleocr'])
+
     # Load test data
     test_images, ground_truth = load_test_data(config)
-    print(f"Loaded {len(test_images)} test images.")
-    
-    # Initialize only Tesseract and PaddleOCR models
-    evaluation_targets = {
-        'base_tesseract': TesseractModel(),
+    print(f"Loaded {len(test_images)} test image{'s' if len(test_images) > 1 else ''} for evaluation.")
+
+    # Model mapping
+    model_map = {
+        'tesseract': TesseractModel,
+        'easyocr': EasyOCRModel,
+        'yolo': YOLOOCRModel,
+        'paddleocr': PaddleOCRModel if PADDLEOCR_AVAILABLE else None
     }
-    
-    # Add PaddleOCR if available
-    if PADDLEOCR_AVAILABLE:
-        evaluation_targets['base_paddleocr'] = PaddleOCRModel()
-    
+
+    # Initialize models
+    evaluation_targets = {}
+    for name in model_names:
+        if name == 'paddleocr' and not PADDLEOCR_AVAILABLE:
+            print('PaddleOCR is not available and will be skipped.')
+            continue
+        model_cls = model_map.get(name)
+        if model_cls is not None:
+            try:
+                evaluation_targets[f'base_{name}'] = model_cls()
+            except Exception as e:
+                print(f"Warning: Could not initialize {name}: {e}")
+        else:
+            print(f"Warning: Unknown model name '{name}' - skipping.")
+
     if not evaluation_targets:
         print("No models available for evaluation. Exiting script.")
         return
-    
+
     # Generate preprocessing combinations
     preprocessing_combinations = [
         [],  # No preprocessing
@@ -356,20 +383,18 @@ def main():
         ['denoising', 'binarization'],
         ['sharpening', 'denoising', 'binarization']
     ]
-    
+
     # Perform evaluation for all model and preprocessing combinations
     for target_name, model in evaluation_targets.items():
         print(f"\nEvaluating model: {target_name}")
         for preprocess_steps in preprocessing_combinations:
             print(f"Preprocessing steps: {preprocess_steps if preprocess_steps else 'None'}")
-            
             # Create evaluation config
             eval_config = create_evaluation_config(
                 model_name=target_name,
                 preprocessing_steps=preprocess_steps,
                 use_gpu=config['hardware']['use_gpu']
             )
-            
             # Perform evaluation
             results = evaluate_combination(
                 model=model,
@@ -377,15 +402,13 @@ def main():
                 ground_truth=ground_truth,
                 preprocessing_steps=preprocess_steps
             )
-            
             # Save results
             save_evaluation_results(results, eval_config)
-            
             # Print intermediate results
             print(f"Item Accuracy: {results['metrics']['item_accuracy']:.4f}")
             print(f"Character Accuracy: {results['metrics']['char_accuracy']:.4f}")
             print(f"Inference Time: {results['metrics']['inference_time']:.2f} seconds")
-    
+
     # Analyze overall results and generate report
     print("\nAnalyzing overall results...")
     all_results = load_all_results()
