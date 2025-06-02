@@ -387,7 +387,14 @@ def main():
     # Perform evaluation for all model and preprocessing combinations
     for target_name, model in evaluation_targets.items():
         print(f"\nEvaluating model: {target_name}")
-        for preprocess_steps in preprocessing_combinations:
+        
+        # Skip certain preprocessing for specific models if needed
+        model_preprocessing_combinations = preprocessing_combinations
+        if 'yolo' in target_name.lower():
+            # YOLO might not need some preprocessing
+            model_preprocessing_combinations = [[], ['sharpening']]
+            
+        for preprocess_steps in model_preprocessing_combinations:
             print(f"Preprocessing steps: {preprocess_steps if preprocess_steps else 'None'}")
             # Create evaluation config
             eval_config = create_evaluation_config(

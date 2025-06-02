@@ -5,7 +5,13 @@ models:
     - easyocr
     - paddleocr
     - yolo_ocr
+    - azure_read
+    - azure_layout
+    - azure_prebuilt_read
   selected: "easyocr"  # Default model
+  azure_config:
+    endpoint: ${AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}
+    key: ${AZURE_DOCUMENT_INTELLIGENCE_KEY}
 
 # Preprocessing Configuration
 preprocessing:
@@ -30,7 +36,9 @@ evaluation:
   save_results: true
   results_dir: "results"
   save_visualizations: true
-  test_data_limit: 1  # Process only one test data
+  test_data_limit: 0  # 0 means process all test data
+  batch_sizes: [1, 5, 10]  # Number of test samples per batch
+  output_format: "json"  # json or csv
 
 # Data Configuration
 data:
