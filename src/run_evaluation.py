@@ -14,11 +14,13 @@ import argparse
 # Attempt to import PaddleOCR module
 try:
     from models import EasyOCRModel, PaddleOCRModel, YOLOOCRModel
+    from models.azure_ocr import AzureReadModel, AzureLayoutModel, AzurePrebuiltReadModel
     PADDLEOCR_AVAILABLE = True
 except ImportError as e:
     print(f"\nWarning: Could not import PaddleOCR module - {str(e)}")
     print("PaddleOCR model will be excluded from evaluation.")
     from models import EasyOCRModel, YOLOOCRModel
+    from models.azure_ocr import AzureReadModel, AzureLayoutModel, AzurePrebuiltReadModel
     PADDLEOCR_AVAILABLE = False
 
 from preprocessing import (
@@ -349,8 +351,11 @@ def main():
     model_map = {
         'tesseract': TesseractModel,
         'easyocr': EasyOCRModel,
-        'yolo': YOLOOCRModel,
-        'paddleocr': PaddleOCRModel if PADDLEOCR_AVAILABLE else None
+        'yolo_ocr': YOLOOCRModel,
+        'paddleocr': PaddleOCRModel if PADDLEOCR_AVAILABLE else None,
+        'azure_read': AzureReadModel,
+        'azure_layout': AzureLayoutModel,
+        'azure_prebuilt_read': AzurePrebuiltReadModel
     }
 
     # Initialize models

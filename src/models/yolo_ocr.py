@@ -7,22 +7,17 @@ import cv2
 
 class YOLOOCRModel(BaseOCRModel):
     """YOLO 기반 텍스트 검출 + EasyOCR 인식기 조합 모델"""
-    def __init__(self, use_gpu: bool = True, config_path: str = "configs/default_config.yaml", 
-                 yolo_model_path: str = "yolov8n.pt"):
-        super().__init__(config_path)
-        self.device = "cuda" if use_gpu else "cpu"
+    def __init__(self, model_path: str = 'yolov8n.pt'):
+        """Initialize YOLO OCR model.
         
-        # YOLO 모델 초기화
-        try:
-            self.yolo = YOLO(yolo_model_path)
-            logging.info(f"YOLO model loaded from {yolo_model_path}")
-        except Exception as e:
-            logging.error(f"Failed to load YOLO model: {str(e)}")
-            raise
+        Args:
+            model_path (str): Path to YOLO model weights
+        """
+        self.model = YOLO(model_path)
         
         # EasyOCR 초기화
         try:
-            self.ocr = easyocr.Reader(['ko'], gpu=use_gpu)
+            self.ocr = easyocr.Reader(['ko'], gpu=True)
             logging.info("EasyOCR initialized with Korean language support")
         except Exception as e:
             logging.error(f"Failed to initialize EasyOCR: {str(e)}")
@@ -37,6 +32,38 @@ class YOLOOCRModel(BaseOCRModel):
         # 이미지 전처리 설정
         self.min_crop_size = 10  # 최소 크롭 크기
         self.padding = 5  # 바운딩 박스 패딩
+
+    def __call__(self, image: np.ndarray) -> list:
+        """Perform OCR on the input image.
+        
+        Args:
+            image (np.ndarray): Input image in BGR format
+            
+        Returns:
+            list: List of (text, bbox) tuples
+        """
+        # Run YOLO detection
+        results = self.model(image)
+        
+        predictions = []
+        for result in results:
+            boxes = result.boxes
+            for box in boxes:
+                # Get bounding box coordinates
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                
+                # Get confidence score
+                conf = box.conf[0].cpu().numpy()
+                
+                # Get class name
+                cls = box.cls[0].cpu().numpy()
+                text = result.names[int(cls)]
+                
+                # Add to predictions if confidence is high enough
+                if conf > 0.5:
+                    predictions.append((text, [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
+        
+        return predictions
 
     def preprocess(self, image: np.ndarray) -> np.ndarray:
         """이미지 전처리"""
@@ -96,37 +123,26 @@ class YOLOOCRModel(BaseOCRModel):
         """텍스트 검출 및 인식"""
         try:
             # 1. YOLO로 텍스트 영역 검출
-            results = self.yolo.predict(processed_image, device=self.device, verbose=False)
+            results = self.model(processed_image)
             
             # 검출 결과 추출
-            boxes = results[0].boxes.xyxy.cpu().numpy() if hasattr(results[0].boxes, 'xyxy') else []
-            confidences = results[0].boxes.conf.cpu().numpy() if hasattr(results[0].boxes, 'conf') else []
-            
-            # 바운딩 박스 필터링
-            filtered_boxes, filtered_confidences = self._filter_boxes(boxes, confidences)
-            
-            # 2. 각 박스별로 EasyOCR 인식
             predictions = []
-            for box, conf in zip(filtered_boxes, filtered_confidences):
-                # 이미지 크롭 및 처리
-                crop, (x1, y1, x2, y2) = self._process_crop(processed_image, box)
-                if crop is None:
-                    continue
-                
-                # OCR 수행
-                try:
-                    ocr_results = self.ocr.readtext(crop)
-                    if ocr_results:
-                        # 가장 신뢰도 높은 결과 선택
-                        ocr_results.sort(key=lambda x: x[2], reverse=True)
-                        text, ocr_conf = ocr_results[0][1], ocr_results[0][2]
-                        
-                        # OCR 신뢰도 필터링
-                        if ocr_conf > self.ocr_confidence_threshold:
-                            predictions.append((text, [float(x1), float(y1), float(x2), float(y2)]))
-                except Exception as e:
-                    logging.warning(f"OCR failed for a crop: {str(e)}")
-                    continue
+            for result in results:
+                boxes = result.boxes
+                for box in boxes:
+                    # Get bounding box coordinates
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    
+                    # Get confidence score
+                    conf = box.conf[0].cpu().numpy()
+                    
+                    # Get class name
+                    cls = box.cls[0].cpu().numpy()
+                    text = result.names[int(cls)]
+                    
+                    # Add to predictions if confidence is high enough
+                    if conf > 0.5:
+                        predictions.append((text, [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
             
             return predictions
             
@@ -144,7 +160,7 @@ class YOLOOCRModel(BaseOCRModel):
         seen_boxes = set()
         
         for text, box in prediction_result:
-            box_tuple = tuple(box)
+            box_tuple = tuple(map(tuple, box))
             if box_tuple not in seen_boxes:
                 seen_boxes.add(box_tuple)
                 unique_predictions.append((text, box))
