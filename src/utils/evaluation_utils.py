@@ -29,8 +29,7 @@ def convert_numpy_types(obj):
 def create_evaluation_config(
     model_name: str,
     preprocessing_steps: List[str],
-    use_gpu: bool,
-    base_model: str = None
+    use_gpu: bool
 ) -> Dict[str, Any]:
     """Creates evaluation configuration.
         
@@ -38,8 +37,6 @@ def create_evaluation_config(
         model_name (str): Name of the model being evaluated.
         preprocessing_steps (List[str]): List of preprocessing steps applied.
         use_gpu (bool): Whether GPU was used.
-        base_model (str, optional): Base model name (e.g., 'PaddleOCR', 'EasyOCR', 'YOLO').
-                                  If not provided, will try to infer from model_name.
         
     Returns:
         Dict[str, Any]: Evaluation configuration dictionary.
@@ -53,23 +50,10 @@ def create_evaluation_config(
     # Combine model name and preprocessing name for config name
     config_name = f"{timestamp}_{model_name}_{preprocess_name}"
     
-    # Infer base model if not provided
-    if base_model is None:
-        model_lower = model_name.lower()
-        if 'paddle' in model_lower:
-            base_model = 'PaddleOCR'
-        elif 'easy' in model_lower:
-            base_model = 'EasyOCR'
-        elif 'yolo' in model_lower:
-            base_model = 'YOLO'
-        else:
-            base_model = 'unknown'
-    
     # Create config dictionary
     config = {
         'config_name': config_name,
         'model_name': model_name,
-        'base_model': base_model,
         'preprocessing_steps': preprocessing_steps,
         'use_gpu': use_gpu,
         'timestamp': timestamp
@@ -204,16 +188,16 @@ def load_all_results() -> Dict[str, Any]:
     return all_results
 
 def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy'):
-    """성능 비교 그래프를 생성합니다."""
+    """Generate performance comparison graph."""
     plt.figure(figsize=(12, 6))
     
-    # 모델별 성능 비교
+    # Compare performance by model
     plt.subplot(1, 2, 1)
     sns.barplot(data=df, x='model', y=metric)
     plt.title(f'Model Performance Comparison ({metric})')
     plt.xticks(rotation=45)
     
-    # 전처리 효과 비교
+    # Compare preprocessing effects
     plt.subplot(1, 2, 2)
     sns.boxplot(data=df, x='preprocessing', y=metric)
     plt.title(f'Preprocessing Effect on {metric}')
@@ -233,25 +217,60 @@ def generate_performance_report(all_results: Dict[str, Any]) -> pd.DataFrame:
     """
     report_list = []
     
+    # Define mapping from model_name to 근본 모델(method)
+    model_method_map = {
+        'base_easyocr': {
+            'text_detection': 'CRAFT',
+            'text_recognition': 'CRNN (CNN + BiLSTM + CTC)'
+        },
+        'easyocr': {
+            'text_detection': 'CRAFT',
+            'text_recognition': 'CRNN (CNN + BiLSTM + CTC)'
+        },
+        'base_paddleocr': {
+            'text_detection': 'DBNet/EAST',
+            'text_recognition': 'CRNN/SVTR'
+        },
+        'paddleocr': {
+            'text_detection': 'DBNet/EAST',
+            'text_recognition': 'CRNN/SVTR'
+        },
+        'base_tesseract': {
+            'text_detection': 'Layout Analysis',
+            'text_recognition': 'LSTM + CTC'
+        },
+        'tesseract': {
+            'text_detection': 'Layout Analysis',
+            'text_recognition': 'LSTM + CTC'
+        },
+        'base_yolo_ocr': {
+            'text_detection': 'YOLOv5/YOLOv8',
+            'text_recognition': 'External OCR'
+        },
+        'yolo_ocr': {
+            'text_detection': 'YOLOv5/YOLOv8',
+            'text_recognition': 'External OCR'
+        }
+    }
+    
     for config_key, result_data in all_results.items():
         config = result_data['config']
         metrics = result_data['metrics']
         
-        # Extract base model information if available
-        base_model = config.get('base_model', 'unknown')
-        if base_model == 'unknown' and 'model_name' in config:
-            # Try to infer base model from model_name
-            model_name = config['model_name'].lower()
-            if 'paddle' in model_name:
-                base_model = 'PaddleOCR'
-            elif 'easy' in model_name:
-                base_model = 'EasyOCR'
-            elif 'yolo' in model_name:
-                base_model = 'YOLO'
+        # Extract base model information from model_name
+        model_name = config['model_name']
+        method_info = model_method_map.get(model_name, {'text_detection': model_name, 'text_recognition': model_name})
+        if model_name == "base_easyocr":
+            model_name_out = "easyocr"
+        elif model_name.startswith('base_'):
+            model_name_out = model_name.split('_', 1)[1]
+        else:
+            model_name_out = model_name
         
         row = {
-            'model_name': config['model_name'],
-            'base_model': base_model,
+            'model_name': model_name_out,
+            'text_detection': method_info['text_detection'],
+            'text_recognition': method_info['text_recognition'],
             'preprocessing_steps': "_".join(config['preprocessing_steps']) if config['preprocessing_steps'] else 'no_preprocessing',
             'item_accuracy': metrics.get('item_accuracy', 0),
             'char_accuracy': metrics.get('char_accuracy', 0),
@@ -271,21 +290,25 @@ def generate_performance_report(all_results: Dict[str, Any]) -> pd.DataFrame:
             row['average_normalized_levenshtein'] = ts_metrics.get('normalized_levenshtein', 0)
             row['average_bleu_score'] = ts_metrics.get('bleu_score', 0)
             if 'rouge_scores' in ts_metrics:
-                 for r_metric in ['rouge-1', 'rouge-2', 'rouge-l']:
-                      row[f'average_rouge_{r_metric}'] = ts_metrics['rouge_scores'].get(r_metric, 0)
+                for rouge_type, score in ts_metrics['rouge_scores'].items():
+                    row[f'average_rouge_{rouge_type}'] = score
         
         report_list.append(row)
     
-    # Create DataFrame
+    # Create DataFrame and sort by model_name and preprocessing_steps
     df = pd.DataFrame(report_list)
+    df = df.sort_values(['model_name', 'preprocessing_steps'])
     
-    # Save to CSV file
-    results_dir = 'results'
+    # Save to CSV
+    results_dir = Path('results')
+    results_dir.mkdir(exist_ok=True)
+    
     today = time.strftime('%Y%m%d')
     next_num = get_next_report_number()
-    report_filepath = os.path.join(results_dir, f"{today}_performance_report_{next_num}.csv")
-    df.to_csv(report_filepath, index=False, encoding='utf-8')
+    filename = f"{today}_performance_report_{next_num}.csv"
+    filepath = results_dir / filename
     
-    print(f"Performance report saved to {report_filepath}")
-
+    df.to_csv(filepath, index=False)
+    print(f"Performance report saved to {filepath}")
+    
     return df 

@@ -12,12 +12,12 @@ from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
 # Attempt to import PaddleOCR module
 try:
-    from models import EasyOCRModel, PaddleOCRModel
+    from models import EasyOCRModel, PaddleOCRModel, YOLOOCRModel
     PADDLEOCR_AVAILABLE = True
 except ImportError as e:
     print(f"\nWarning: Could not import PaddleOCR module - {str(e)}")
     print("PaddleOCR model will be excluded from evaluation.")
-    from models import EasyOCRModel
+    from models import EasyOCRModel, YOLOOCRModel
     PADDLEOCR_AVAILABLE = False
 
 from preprocessing import (
@@ -31,6 +31,7 @@ from utils.evaluation_utils import (
     load_all_results,
     generate_performance_report
 )
+from models import YOLOOCRModel, TesseractModel
 
 def bbox_iou(boxA, boxB):
     """Compute the Intersection over Union (IoU) of two bounding boxes.
@@ -74,12 +75,13 @@ def convert_bbox_to_x1y1x2y2(bbox, fmt='easyocr'):
         raise ValueError(f"Unknown bounding box format: {fmt}")
 
 def load_test_data(config: Dict[str, Any]) -> tuple:
-    """Loads test data (including subfolders, loads all annotations)."""
+    """Load test data (including subfolders, loads all annotations)."""
     images = []
     ground_truth_annotations = [] # Store list of all annotations instead of list of texts
     
     data_dir = config['data']['test_dir']
     label_dir = config['data']['label_dir']
+    test_data_limit = config['evaluation']['test_data_limit']
 
     # Match images and label files (explore subfolders)
     for root, _, files in os.walk(Path(data_dir) / 'images'): # Explore from images/ subfolder
@@ -87,14 +89,11 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
             if file.endswith('.jpg'):
                 img_path = Path(root) / file
                 
-                # Relative path of the image file based on images/
-                relative_img_sub_path = img_path.relative_to(Path(data_dir) / 'images')
+                # Get relative path from images/5350224/
+                relative_img_path = img_path.relative_to(Path(data_dir) / 'images' / '5350224')
                 
-                # Label file path (based on label_dir)
-                json_path = Path(label_dir) / 'labels' / relative_img_sub_path.parent / relative_img_sub_path.name.replace('.jpg', '.json')
-
-                # Debug print for label file path
-                # print(f"Checking test label path: {json_path}")
+                # Construct corresponding label path
+                json_path = Path(label_dir) / 'labels' / '5350224' / relative_img_path.parent / file.replace('.jpg', '.json')
 
                 if json_path.exists():
                     img = cv2.imread(str(img_path))
@@ -105,6 +104,10 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
                         # Store list of all annotations
                         ground_truth_annotations.append(label_data.get('annotations', []))
                         images.append(img)
+                        
+                        # Check if we've reached the limit
+                        if test_data_limit > 0 and len(images) >= test_data_limit:
+                            return images, ground_truth_annotations
                     else:
                         print(f"Warning: Could not load image {img_path}")
                 else:
@@ -329,46 +332,15 @@ def main():
     test_images, ground_truth = load_test_data(config)
     print(f"Loaded {len(test_images)} test images.")
     
-    # Trained models directory
-    trained_model_dir = "trained_models"
-
-    # Initialize models and set up evaluation targets
-    evaluation_targets = {}
-
-    # 1. Add base models
-    base_model_name = config['models']['selected']
-    # Initialize EasyOCR model (use_gpu argument is used)
-    evaluation_targets['base_easyocr'] = EasyOCRModel(use_gpu=config['hardware']['use_gpu'])
+    # Initialize only Tesseract and PaddleOCR models
+    evaluation_targets = {
+        'base_tesseract': TesseractModel(),
+    }
     
-    # Initialize PaddleOCR model (skip if module is not available or initialization fails)
+    # Add PaddleOCR if available
     if PADDLEOCR_AVAILABLE:
-        try:
-            evaluation_targets['base_paddleocr'] = PaddleOCRModel(use_gpu=config['hardware']['use_gpu'])
-        except Exception as e:
-            print(f"\nWarning: PaddleOCR model initialization failed - {str(e)}")
-            print("PaddleOCR model evaluation will be skipped.")
+        evaluation_targets['base_paddleocr'] = PaddleOCRModel()
     
-    # Add other base models (if needed)
-
-    # 2. Add trained models (if they exist)
-    # Check for learnable models defined in config and attempt to load trained models
-    learnable_models = ['tesseract', 'paddleocr'] # List of models supporting user training
-    for model_name in learnable_models:
-        trained_model_path = os.path.join(trained_model_dir, f'{model_name}_korean')
-        # Check if trained model file (e.g., pytorch model file) exists
-        # Needs to be adjusted according to the actual model file extension and structure
-        if os.path.exists(trained_model_path): # Check if trained model directory or file exists
-             try:
-                 # TODO: Implement trained model loading logic
-                 # Example: if model_name == 'tesseract': loaded_model = TesseractModel(model_path=trained_model_path)
-                 # Example: elif model_name == 'paddleocr': loaded_model = PaddleOCRModel(model_path=trained_model_path)
-                 print(f"\nWarning: Loading trained {model_name} model is not yet implemented.")
-                 # evaluation_targets[f'trained_{model_name}'] = loaded_model
-             except Exception as e:
-                 print(f"Warning: Failed to load trained {model_name} model from {trained_model_path}: {e}")
-        else:
-            print(f"Info: Trained {model_name} model not found at {trained_model_path}. Skipping evaluation for this model.")
-
     if not evaluation_targets:
         print("No models available for evaluation. Exiting script.")
         return
@@ -391,22 +363,11 @@ def main():
         for preprocess_steps in preprocessing_combinations:
             print(f"Preprocessing steps: {preprocess_steps if preprocess_steps else 'None'}")
             
-            # Determine base model from target_name
-            if 'paddleocr' in target_name:
-                base_model = 'PaddleOCR'
-            elif 'easyocr' in target_name:
-                base_model = 'EasyOCR'
-            elif 'yolo' in target_name:
-                base_model = 'YOLO'
-            else:
-                base_model = None  # Will be inferred in create_evaluation_config
-                
             # Create evaluation config
             eval_config = create_evaluation_config(
-                model_name=target_name, # Include base/trained info in model name
+                model_name=target_name,
                 preprocessing_steps=preprocess_steps,
-                use_gpu=config['hardware']['use_gpu'],
-                base_model=base_model
+                use_gpu=config['hardware']['use_gpu']
             )
             
             # Perform evaluation
