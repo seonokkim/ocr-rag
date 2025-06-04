@@ -2,6 +2,11 @@
 
 This repository provides a comprehensive framework for evaluating the performance of Korean OCR models.
 
+## Author
+- **Name**: Riley Kim
+- **Email**: seonokrkim@gmail.com
+- **GitHub**: [seonokkim](https://github.com/seonokkim)
+
 ## Key Features
 
 - Support for multiple OCR models:
@@ -111,4 +116,10 @@ See `requirements.txt` for specific version requirements.
 
 ## License
 
-MIT License 
+MIT License
+
+## Contact
+
+For any questions or suggestions, please contact:
+- Email: seonokrkim@gmail.com
+- GitHub: [seonokkim](https://github.com/seonokkim) 

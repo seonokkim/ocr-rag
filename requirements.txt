@@ -1,6 +1,6 @@
 # Core Dependencies
 numpy==1.24.3
-opencv-python==4.8.0.76
+opencv-python==4.6.0.66  # Downgraded to be compatible with paddleocr
 PyYAML==6.0.1
 tqdm==4.65.0
 
@@ -41,3 +41,8 @@ black==23.7.0
 isort==5.12.0
 flake8==6.1.0
 mypy==1.5.0
+
+# System Dependencies (Install using apt-get)
+# sudo apt-get install tesseract-ocr
+# sudo apt-get install tesseract-ocr-kor  # For Korean language support
+# sudo apt-get install tesseract-ocr-kor-vert  # For vertical text support
